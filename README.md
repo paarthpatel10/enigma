@@ -79,6 +79,8 @@ are illustrative, not retrieved citations. Reports do not represent brand qualit
 
 ## Working documents
 
+- [`docs/HOW_ENIGMA_WORKS.md`](docs/HOW_ENIGMA_WORKS.md) — shareable explanation of
+  the idea, current version, workflow, measurements, limitations, and future scope
 - [`docs/PROJECT_SPEC.md`](docs/PROJECT_SPEC.md) — product and research direction
 - [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) — architecture,
   quality, observability, testing, and repository structure
