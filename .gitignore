@@ -1,0 +1,146 @@
+# -----------------------------------------------------------------------------
+# Secrets and local configuration
+# Keep sanitized templates such as .env.example in Git.
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+secrets.*
+!.secrets.example.*
+
+# SSH private keys accidentally copied into the repository
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# -----------------------------------------------------------------------------
+# Enigma research data and generated outputs
+# Preserve only explicitly curated fixtures/samples in Git.
+# -----------------------------------------------------------------------------
+data/raw/
+data/interim/
+data/processed/
+data/external/
+artifacts/
+outputs/
+reports/generated/
+experiments/runs/
+model-responses/
+output/
+.playwright-cli/
+
+# Local databases and database journals
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# -----------------------------------------------------------------------------
+# Logs, temporary files, caches, and coverage
+# -----------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+.cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+.ipynb_checkpoints/
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# -----------------------------------------------------------------------------
+# Node.js / JavaScript / TypeScript
+# -----------------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+.turbo/
+.parcel-cache/
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# Infrastructure and deployment state
+# -----------------------------------------------------------------------------
+*.tfstate
+*.tfstate.*
+.terraform/
+.serverless/
+.vercel/
+.netlify/
+
+# -----------------------------------------------------------------------------
+# Editors and operating systems
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.code-workspace
+*.iml
+
+# Personal Codex instructions and project-local skills
+.agents/
+AGENTS.md
+
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# -----------------------------------------------------------------------------
+# Archives and large generated packages
+# -----------------------------------------------------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
