@@ -1,6 +1,9 @@
 # Enigma: the idea, the current prototype, and what comes next
 
 Version: local reviewer prototype, documented 13 September 2026.
+Update 15 September: the first live skincare collection saved two answers then
+stopped on a provider 503 error. See [current result](SKINCARE_PILOT_RESULT.md).
+The explanation below describes the original synthetic reviewer version.
 Audience: product reviewers, collaborators, and anyone being introduced to Enigma.
 
 > This version is a working local application powered by synthetic responses.

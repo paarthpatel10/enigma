@@ -11,20 +11,29 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from experiments.india_skincare import EXPERIMENT as SKINCARE
 from experiments.project_tools import EXPERIMENT
+from src.adapters.gemini import GeminiProvider, load_key
 from src.adapters.store import FileStore
 from src.application.runner import collect, prepare
-from src.domain.research import extract, summarize
+from src.domain.research import extract, extract_live, summarize
+from src.ports.provider import Provider
 
 
 class StartRequest(BaseModel):
-    definition: Literal["project-tools"] = "project-tools"
+    definition: Literal["project-tools", "india-skincare"] = "project-tools"
+    free_tier_ack: bool = False
     name: str = Field(default="Project management landscape", min_length=1, max_length=100)
     repeats: int = Field(default=10, ge=1, le=20)
     simulate_failure: bool = False
 
 
-def create_app(root: Path | None = None, delay: float = 0.04) -> FastAPI:
+def create_app(
+    root: Path | None = None,
+    delay: float = 0.04,
+    live_provider: Provider | None = None,
+    eligibility_hold: str = "",
+) -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     store = FileStore(root or Path(os.environ.get("ENIGMA_DATA_DIR", "data/raw")))
 
@@ -75,14 +84,37 @@ def create_app(root: Path | None = None, delay: float = 0.04) -> FastAPI:
 
     @app.post("/api/experiments", status_code=201)
     def start(body: StartRequest, tasks: BackgroundTasks) -> dict[str, Any]:
+        provider = None
+        if body.definition == "india-skincare":
+            if not body.free_tier_ack or body.repeats != 3 or body.simulate_failure:
+                raise HTTPException(
+                    422,
+                    "Live pilot requires free-tier acknowledgement, "
+                    "3 repeats, and no simulated failure",
+                )
+            try:
+                if eligibility_hold:
+                    raise HTTPException(409, eligibility_hold)
+                provider = live_provider or GeminiProvider(load_key())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         with store.lock:
             if any(s["status"] in {"queued", "running"} for s in store.list()):
                 raise HTTPException(409, "A replay is already running. Wait for it to finish.")
-            definition = replace(EXPERIMENT, repeats=body.repeats)
+            definition = (
+                SKINCARE if provider is not None else replace(EXPERIMENT, repeats=body.repeats)
+            )
             status = prepare(
                 store, definition, body.name.strip() or EXPERIMENT.name, body.simulate_failure
             )
-        tasks.add_task(collect, store, status["id"], definition, delay)
+        tasks.add_task(
+            collect,
+            store,
+            status["id"],
+            definition,
+            10 if provider is not None else delay,
+            provider,
+        )
         return status
 
     @app.get("/api/experiments/{identifier}")
@@ -99,14 +131,27 @@ def create_app(root: Path | None = None, delay: float = 0.04) -> FastAPI:
     def responses(identifier: str) -> list[dict[str, Any]]:
         require(identifier)
         brands = store.read(identifier, "manifest")["brands"]
-        return [{**run, **extract(run["raw_text"], brands)} for run in store.runs(identifier)]
+        return [
+            {
+                **run,
+                **(
+                    extract_live(run["raw_text"])
+                    if run.get("synthetic") is False
+                    else extract(run["raw_text"], brands)
+                ),
+            }
+            for run in store.runs(identifier)
+        ]
 
     @app.get("/api/experiments/{identifier}/export")
     def export(identifier: str) -> JSONResponse:
         status = require(identifier)
         return JSONResponse(
             {
-                "notice": "Synthetic fixtures; not empirical brand research.",
+                "notice": "Live ungrounded pilot. Provisional extraction; "
+                "URLs unverified; not medical advice."
+                if status.get("mode") == "live-ungrounded"
+                else "Synthetic fixtures; not empirical brand research.",
                 "manifest": store.read(identifier, "manifest"),
                 "status": status,
                 "runs": store.runs(identifier),

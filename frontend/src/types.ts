@@ -7,6 +7,9 @@ export type Experiment = {
   total: number;
   failed: number;
   category: string;
+  mode?: string;
+  excluded?: number;
+  unattempted?: number;
 };
 export type Estimate = {
   count: number;
@@ -19,7 +22,7 @@ export type BrandMetric = {
   mentions: number;
   total: number;
   probability: number | null;
-  recommendations: number;
+  recommendations: number | null;
   interval: number[] | null;
   by_model: Record<string, Estimate>;
 };
@@ -32,7 +35,7 @@ export type Detail = Experiment & {
     geography: string;
     persona: string;
     version: string;
-    settings: { seed: number };
+    settings: Record<string, unknown>;
     [key: string]: unknown;
   };
   summary: {

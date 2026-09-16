@@ -27,4 +27,8 @@ export const date = (value: string) =>
     timeStyle: "short",
   }).format(new Date(value));
 export const modelName = (model: string) =>
-  model === "fixture-a" ? "Fixture A" : "Fixture B";
+  model === "fixture-a"
+    ? "Fixture A"
+    : model === "fixture-b"
+      ? "Fixture B"
+      : model;

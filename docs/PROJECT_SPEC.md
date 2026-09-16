@@ -156,6 +156,12 @@ databases, or dashboard libraries.
 
 ## 10. Open decisions
 
+- Approved live pilot scope (2026-09-14): India prompt context, facial moisturizers
+  for dry/sensitive skin under INR 1,000; one ungrounded Gemini 3.1 Flash-Lite
+  target, six neutral prompts and three repetitions. See SKINCARE_PILOT_DESIGN.md.
+  User approved retaining Simple with its official-store stock limitation on
+  2026-09-14; the eligibility hold is released. This does not complete the
+  two-provider research milestone.
 - Initial product category and brands
 - Providers and whether collection uses APIs, consumer interfaces, or both
 - Initial geography and personas

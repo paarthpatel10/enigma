@@ -15,6 +15,8 @@ Production scope and architecture remain provisional. See
 
 ## Project status
 
+- Live skincare integration supports a bounded, ungrounded Gemini pilot.
+  See [pilot status](docs/SKINCARE_IMPLEMENTATION_STATUS.md).
 - Stage: local reviewer prototype with synthetic replay data
 - Default branch: `main`
 - Planned integration branch: `develop`
@@ -23,8 +25,17 @@ Production scope and architecture remain provisional. See
 ## Try the reviewer experience
 
 Requires Python 3.12+ and Node.js 22.12+. This is a local, single-user prototype.
-All example responses are synthetic fixtures. No model credentials or paid API
-calls are used. Live model collection is not yet implemented.
+The default example uses synthetic fixtures without API calls. The separate
+India skincare pilot makes up to 18 real Gemini requests only when explicitly
+launched with free-tier acknowledgement. It uses `GEMINI_API_KEY` from the process
+environment or `.env`; legacy local `gemini` is also accepted. Never expose the
+key to the frontend or commit it. Verify the project's billing tier before each
+live launch; the application cannot independently establish billing status.
+
+Live collection has no search tools, automatic retries, or model fallback. It
+stops on external errors and preserves incomplete evidence. Synthetic and live
+experiments are labeled separately. Simple remains tracked with its official-store
+stock limitation disclosed; results are not purchasing or medical advice.
 
 From the repository root in PowerShell:
 

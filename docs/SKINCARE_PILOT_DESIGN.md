@@ -1,8 +1,12 @@
 # India skincare live pilot design
 
 Date: 2026-09-14
-Status: scope approved in conversation; detailed design ready for review.
-Implementation has not started. The successful Gemini connectivity test is not
+Status: design approved; local implementation and first collection in progress.
+Amendment approved 2026-09-14: keep Simple as a tracked brand despite the
+official-store sold-out state; record the limitation rather than infer purchase
+eligibility. Dot & Key's 100 g Barrier Repair variant is listed at INR 395 and
+available on its official collection. The prior collection hold is released.
+The successful Gemini connectivity test is not
 a research run and must not enter this dataset.
 
 ## Objective and scope
