@@ -3,8 +3,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
-  ChartBar,
-  CheckCircle,
   Cube,
   DownloadSimple,
   Flask,
@@ -12,27 +10,44 @@ import {
   MagnifyingGlass,
   Moon,
   Play,
-  Pulse,
   Sun,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { api, date, modelName } from "./api";
+import { api, date } from "./api";
 import {
-  EvidenceDialog,
+  EvidenceSheet,
+  ExplainabilityLedger,
   Methodology,
-  ResponseTable,
+  ResponseList,
   RunDialog,
   Status,
   Visibility,
 } from "./components";
+import { getFinding, getResearchState } from "./researchPresentation";
 import type { Detail, Experiment, Run } from "./types";
 
 const pages = [
-  { id: "overview", name: "Overview", icon: House },
-  { id: "experiments", name: "Experiments", icon: Flask },
-  { id: "responses", name: "Response explorer", icon: MagnifyingGlass },
-  { id: "methodology", name: "Methodology", icon: BookOpen },
-];
+  { id: "overview", name: "Overview", compactName: "Overview", icon: House },
+  {
+    id: "experiments",
+    name: "Experiments",
+    compactName: "Experiments",
+    icon: Flask,
+  },
+  {
+    id: "responses",
+    name: "Response explorer",
+    compactName: "Responses",
+    icon: MagnifyingGlass,
+  },
+  {
+    id: "methodology",
+    name: "Methodology",
+    compactName: "Methodology",
+    icon: BookOpen,
+  },
+] as const;
+
 const readQuery = () => new URLSearchParams(window.location.search);
 
 export default function App() {
@@ -46,14 +61,16 @@ export default function App() {
   const [dark, setDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
+
   const page = query.get("page") || "overview";
   const selectedId = query.get("experiment") || experiments[0]?.id;
   const search = query.get("q") || "";
   const model = query.get("model") || "";
   const status = query.get("status") || "";
-  const selectedRun = runs.find((r) => r.id === query.get("run")) ?? null;
+  const selectedRun = runs.find((run) => run.id === query.get("run")) ?? null;
   const loading = !detail || detail.id !== selectedId;
   const active = detail?.status === "running" || detail?.status === "queued";
+  const live = detail?.mode === "live-ungrounded";
 
   function navigate(changes: Record<string, string>, replace = false) {
     const next = readQuery();
@@ -63,20 +80,25 @@ export default function App() {
     window.history[replace ? "replaceState" : "pushState"]({}, "", `?${next}`);
     setQuery(next);
   }
+
   useEffect(() => {
     const handler = () => setQuery(readQuery());
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
   }, []);
+
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
   }, [dark]);
+
   const refreshList = useCallback(async () => {
     setExperiments(await api<Experiment[]>("/experiments"));
   }, []);
+
   useEffect(() => {
-    refreshList().catch((e) => setError(e.message));
+    refreshList().catch((reason: Error) => setError(reason.message));
   }, [refreshList]);
+
   useEffect(() => {
     if (!selectedId) return;
     let disposed = false;
@@ -94,8 +116,8 @@ export default function App() {
         if (next.status === "running" || next.status === "queued")
           timer = setTimeout(load, 500);
         else refreshList().catch(() => undefined);
-      } catch (e) {
-        if (!disposed) setError((e as Error).message);
+      } catch (reason) {
+        if (!disposed) setError((reason as Error).message);
       }
     };
     load();
@@ -106,33 +128,40 @@ export default function App() {
   }, [selectedId, refreshList]);
 
   const filtered = runs.filter(
-    (r) =>
-      (!model || r.model === model) &&
-      (!status || r.status === status) &&
-      `${r.prompt} ${r.raw_text}`.toLowerCase().includes(search.toLowerCase()),
+    (run) =>
+      (!model || run.model === model) &&
+      (!status || run.status === status) &&
+      `${run.prompt} ${run.raw_text}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   );
   const pageNumber = Math.max(1, Number(query.get("p")) || 1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / 12));
   const currentPage = Math.min(pageNumber, pageCount);
   const visibleRuns = filtered.slice((currentPage - 1) * 12, currentPage * 12);
-  const title =
-    page === "overview"
-      ? "How AI sees your category."
-      : page === "responses"
-        ? "The evidence behind the answer."
-        : page === "experiments"
-          ? "A question worth testing."
-          : "Measurement you can inspect.";
-  const subtitle =
-    page === "overview"
-      ? "Explore brand visibility, compare models, inspect the evidence."
-      : page === "responses"
-        ? "Search every response. See exactly what was said and how it was collected."
-        : page === "experiments"
-          ? "Your experiments, their progress, and the questions that drive them."
-          : "Transparent definitions, explicit limitations, and preserved provenance.";
+  const evidenceRun =
+    selectedRun ?? (page === "responses" ? visibleRuns[0] : null);
+
   const link = (target: string) =>
     `?${new URLSearchParams({ ...Object.fromEntries(query), page: target, run: "" })}`;
+  const pageTitle =
+    page === "overview"
+      ? detail?.name || "Research overview"
+      : page === "responses"
+        ? "Response explorer"
+        : page === "experiments"
+          ? "Experiments"
+          : "Methodology";
+  const pageSubtitle =
+    page === "overview"
+      ? detail
+        ? `${detail.category} · ${detail.manifest.geography}`
+        : "Loading the selected study…"
+      : page === "responses"
+        ? "Inspect every prompt, answer, and extraction decision."
+        : page === "experiments"
+          ? "Every saved study, with its collection state and evidence intact."
+          : "See how every result was produced and how it should be read.";
 
   return (
     <>
@@ -141,37 +170,33 @@ export default function App() {
       </a>
       <aside className="sidebar">
         <a className="wordmark" href="?">
-          <Cube size={31} weight="duotone" />
+          <Cube size={30} weight="duotone" aria-hidden="true" />
           <span>
             enigma<span className="wordmark-dot">.</span>
           </span>
         </a>
-        <div className="workspace">
-          <div className="workspace-avatar">E</div>
-          <div>
-            <strong>Research lab</strong>
-            <small>Local workspace</small>
-          </div>
-          <span className="workspace-label">V1</span>
-        </div>
-        <div className="nav-caption">WORKSPACE</div>
+        <p className="brand-strap">AI brand intelligence</p>
         <nav aria-label="Main navigation">
-          {pages.map(({ id, name, icon: Icon }) => (
+          {pages.map(({ id, name, compactName, icon: Icon }) => (
             <a
               href={link(id)}
               key={id}
               className={page === id ? "active" : ""}
               aria-current={page === id ? "page" : undefined}
-              aria-label={name}
-              onClick={(e) => {
-                if (!e.ctrlKey && !e.metaKey) {
-                  e.preventDefault();
+              onClick={(event) => {
+                if (!event.ctrlKey && !event.metaKey) {
+                  event.preventDefault();
                   navigate({ page: id, run: "" });
                 }
               }}
             >
-              <Icon size={20} weight={page === id ? "fill" : "regular"} />
-              <span>{name}</span>
+              <Icon
+                size={20}
+                weight={page === id ? "fill" : "regular"}
+                aria-hidden="true"
+              />
+              <span className="nav-full">{name}</span>
+              <span className="nav-compact">{compactName ?? name}</span>
               {id === "experiments" && (
                 <span className="nav-count">{experiments.length}</span>
               )}
@@ -179,85 +204,119 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="lab-note">
-            <Flask size={20} />
-            <h3>A space to ask better questions.</h3>
-            <p>
-              Start with an experiment.
-              <br />
-              Follow the evidence.
-            </p>
-            <a
-              href={link("methodology")}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate({ page: "methodology" });
-              }}
-            >
-              Read the methodology <ArrowUpRight size={15} />
-            </a>
-          </div>
-          <button className="theme-button" onClick={() => setDark(!dark)}>
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
+          <a
+            className="integrity-link"
+            href={link("methodology")}
+            onClick={(event) => {
+              event.preventDefault();
+              navigate({ page: "methodology", run: "" });
+            }}
+          >
+            <Flask size={20} aria-hidden="true" />
+            <span>
+              <strong>Research integrity</strong>
+              <small>Definitions and limitations</small>
+            </span>
+            <ArrowUpRight size={17} aria-hidden="true" />
+          </a>
+          <button
+            className="theme-button"
+            onClick={() => setDark(!dark)}
+            aria-label={`Use ${dark ? "light" : "dark"} appearance`}
+          >
+            {dark ? (
+              <Sun size={19} aria-hidden="true" />
+            ) : (
+              <Moon size={19} aria-hidden="true" />
+            )}
             <span>{dark ? "Light appearance" : "Dark appearance"}</span>
           </button>
-          <div className="reviewer">
-            <span className="reviewer-avatar">PR</span>
-            <div>
-              <strong>Product reviewer</strong>
-              <small>Local preview</small>
-            </div>
-          </div>
         </div>
       </aside>
+
       <div className="app-shell">
         <header className="topbar">
-          <div>
-            Workspace <span>/</span>{" "}
-            <strong>
-              {pages.find((p) => p.id === page)?.name ?? "Overview"}
-            </strong>
+          <div className="breadcrumb">
+            Studies <span>/</span> <strong>{pageTitle}</strong>
           </div>
-          <span className="local-indicator">
-            <span />
-            Local environment
-          </span>
+          <span className="local-label">Local research workspace</span>
         </header>
         <main id="main">
-          <div className="page-heading">
-            <div>
-              <div className="eyebrow">AI BRAND INTELLIGENCE</div>
-              <h1>{title}</h1>
-              <p>{subtitle}</p>
+          <header className="study-header">
+            <div className="study-copy">
+              <p className="eyebrow">Enigma Research Ledger</p>
+              <h1>{pageTitle}</h1>
+              <p className="study-subtitle">{pageSubtitle}</p>
+              {detail && page !== "experiments" && (
+                <p className="study-date">Created {date(detail.created_at)}</p>
+              )}
             </div>
-            <button
-              className="primary"
-              onClick={() => setRunOpen(true)}
-              disabled={active}
-            >
-              <Play size={16} weight="fill" />
-              Run experiment
-            </button>
-          </div>
-          <div className="preview-notice">
-            <div>
-              <Flask size={18} />
-              <strong>Reviewer preview</strong>
-              <span>Synthetic example data. No live model queries.</span>
+            <div className="study-actions">
+              {detail && page !== "experiments" && (
+                <Status
+                  value={detail.status}
+                  label={getResearchState(detail).label}
+                />
+              )}
+              <button
+                className="primary"
+                onClick={() => setRunOpen(true)}
+                disabled={active}
+              >
+                <Play size={17} weight="fill" aria-hidden="true" /> Run
+                experiment
+              </button>
+              {selectedId && page !== "experiments" && (
+                <a
+                  className="secondary"
+                  href={`/api/experiments/${selectedId}/export`}
+                  download
+                >
+                  <DownloadSimple size={17} aria-hidden="true" /> Export
+                  evidence
+                </a>
+              )}
             </div>
-            <a
-              href={link("methodology")}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate({ page: "methodology" });
-              }}
-            >
-              About this data <ArrowUpRight size={15} />
-            </a>
-          </div>
+          </header>
+
+          {page !== "experiments" && (
+            <div className="study-switcher">
+              <label htmlFor="selected-experiment">Study</label>
+              <select
+                id="selected-experiment"
+                name="selected-experiment"
+                value={selectedId || ""}
+                onChange={(event) =>
+                  navigate({ experiment: event.target.value, run: "", p: "" })
+                }
+              >
+                {experiments.map((experiment) => (
+                  <option key={experiment.id} value={experiment.id}>
+                    {experiment.name} · {experiment.id.slice(0, 6)}
+                  </option>
+                ))}
+              </select>
+              <span className="surface-description">
+                {live
+                  ? "Live · Ungrounded. Extracted claims and URLs require review."
+                  : "Synthetic replay. No live provider calls."}
+              </span>
+              <a
+                href={link("methodology")}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigate({ page: "methodology", run: "" });
+                }}
+              >
+                How to read this study{" "}
+                <ArrowRight size={16} aria-hidden="true" />
+              </a>
+            </div>
+          )}
+
           {error && (
             <div className="error-banner" role="alert">
-              <WarningCircle size={20} />
+              <WarningCircle size={21} aria-hidden="true" />
               <span>{error}</span>
               <button onClick={() => window.location.reload()}>
                 Retry connection
@@ -266,232 +325,94 @@ export default function App() {
           )}
           {notice && (
             <div role="status" className="success-banner">
-              {notice}
+              <span>{notice}</span>
               <button className="text-button" onClick={() => setNotice("")}>
                 Dismiss
               </button>
             </div>
           )}
-          {page !== "experiments" && (
-            <div className="experiment-toolbar">
-              <label>
-                <span className="sr-only">Selected experiment</span>
-                <select
-                  value={selectedId || ""}
-                  onChange={(e) =>
-                    navigate({ experiment: e.target.value, run: "", p: "" })
-                  }
-                >
-                  {experiments.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name} · {e.id.slice(0, 6)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div>
-                {detail && <Status value={detail.status} />}
-                <a
-                  className="secondary export-link"
-                  href={
-                    selectedId
-                      ? `/api/experiments/${selectedId}/export`
-                      : undefined
-                  }
-                  download
-                >
-                  <DownloadSimple size={16} />
-                  Export evidence
-                </a>
-              </div>
-            </div>
-          )}
+
           {loading && page !== "experiments" && !error ? (
-            <div className="loading" role="status">
-              <Pulse size={30} />
-              <h2>Loading the research workspace…</h2>
-              <p>Reading saved experiments and responses.</p>
+            <div className="loading" role="status" aria-live="polite">
+              <div className="loading-line wide" />
+              <div className="loading-line" />
+              <div className="loading-grid">
+                <span />
+                <span />
+                <span />
+              </div>
+              <span className="sr-only">Loading the research workspace…</span>
             </div>
           ) : (
             detail && (
               <>
                 {active && (
                   <div className="progress-banner" role="status">
-                    <span>
-                      Replaying fixtures{" "}
+                    <div>
                       <strong>
-                        {detail.completed} / {detail.total}
+                        {live
+                          ? "Collecting live answers"
+                          : "Replaying fixtures"}
                       </strong>
-                    </span>
+                      <span>
+                        {detail.completed} of {detail.total} attempted
+                      </span>
+                    </div>
                     <progress value={detail.completed} max={detail.total} />
                     <small>Raw evidence is saved after each response.</small>
                   </div>
                 )}
                 {page === "overview" && (
-                  <>
-                    <div className="metrics">
-                      <div>
-                        <span>
-                          <Pulse size={19} />
-                          Responses collected
-                        </span>
-                        <strong>
-                          {detail.completed}
-                          <small> / {detail.total}</small>
-                        </strong>
-                        <p>
-                          {detail.summary.successful} successful ·{" "}
-                          {detail.failed} failed
-                        </p>
-                      </div>
-                      <div>
-                        <span>
-                          <ChartBar size={19} />
-                          Brands in scope
-                        </span>
-                        <strong>{detail.manifest.brands.length}</strong>
-                        <p>One controlled competitor set</p>
-                      </div>
-                      <div>
-                        <span>
-                          <Cube size={19} />
-                          Model targets
-                        </span>
-                        <strong>{detail.manifest.models.length}</strong>
-                        <p>Synthetic fixtures, not providers</p>
-                      </div>
-                      <div>
-                        <span>
-                          <CheckCircle size={19} />
-                          Collection progress
-                        </span>
-                        <strong>
-                          {Math.round((detail.completed / detail.total) * 100)}
-                          <small>%</small>
-                        </strong>
-                        <p>
-                          {detail.manifest.prompts.length} prompts ·{" "}
-                          {detail.manifest.repeats} repeats
-                        </p>
-                      </div>
-                    </div>
-                    <div className="overview-grid">
-                      <Visibility detail={detail} />
-                      <section className="panel brief">
-                        <div className="section-head">
-                          <h2>Experiment brief</h2>
-                          <Flask size={20} />
-                        </div>
-                        <p className="brief-question">
-                          Which tools enter the conversation?
-                        </p>
-                        <p>
-                          Explore how a controlled set of prompts represents
-                          project management brands.
-                        </p>
-                        <dl className="facts">
-                          <div>
-                            <dt>Category</dt>
-                            <dd>{detail.category}</dd>
-                          </div>
-                          <div>
-                            <dt>Prompt variants</dt>
-                            <dd>{detail.manifest.prompts.length}</dd>
-                          </div>
-                          <div>
-                            <dt>Repeats per target</dt>
-                            <dd>{detail.manifest.repeats}</dd>
-                          </div>
-                          <div>
-                            <dt>Persona</dt>
-                            <dd>{detail.manifest.persona}</dd>
-                          </div>
-                          <div>
-                            <dt>Geography</dt>
-                            <dd>{detail.manifest.geography}</dd>
-                          </div>
-                        </dl>
-                        <a
-                          className="brief-link"
-                          href={link("methodology")}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigate({ page: "methodology" });
-                          }}
-                        >
-                          Inspect the experiment definition{" "}
-                          <ArrowRight size={16} />
-                        </a>
-                      </section>
-                    </div>
-                    <section className="panel recent">
-                      <div className="section-head">
-                        <div>
-                          <h2>Response trail</h2>
-                          <p>Go from an aggregate to the original answer.</p>
-                        </div>
-                        <a
-                          className="text-link"
-                          href={link("responses")}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigate({ page: "responses" });
-                          }}
-                        >
-                          View all responses <ArrowRight size={16} />
-                        </a>
-                      </div>
-                      <ResponseTable
-                        runs={runs.slice(-4).reverse()}
-                        onSelect={(run) => navigate({ run: run.id })}
-                      />
-                    </section>
-                  </>
+                  <Overview
+                    detail={detail}
+                    runs={runs}
+                    onOpenEvidence={(run) =>
+                      navigate({ page: "responses", run: run.id })
+                    }
+                    onViewAll={() => navigate({ page: "responses", run: "" })}
+                  />
                 )}
                 {page === "responses" && (
-                  <section className="panel response-panel">
-                    <div className="section-head">
-                      <div>
-                        <h2>Response explorer</h2>
-                        <p>
-                          {filtered.length} of {runs.length} responses match
-                          your selection
-                        </p>
-                      </div>
-                    </div>
+                  <section
+                    className="response-page"
+                    aria-labelledby="response-count"
+                  >
                     <div className="filters">
-                      <label className="search">
-                        <MagnifyingGlass size={18} />
+                      <label className="search" htmlFor="response-search">
+                        <MagnifyingGlass size={19} aria-hidden="true" />
+                        <span className="sr-only">Search responses</span>
                         <input
-                          aria-label="Search responses"
-                          name="search"
+                          id="response-search"
+                          name="response-search"
                           autoComplete="off"
                           placeholder="Search prompts or answers…"
                           value={search}
-                          onChange={(e) =>
-                            navigate({ q: e.target.value, p: "" }, true)
+                          onChange={(event) =>
+                            navigate({ q: event.target.value, p: "" }, true)
                           }
                         />
                       </label>
                       <select
                         aria-label="Filter model"
+                        name="model-filter"
                         value={model}
-                        onChange={(e) =>
-                          navigate({ model: e.target.value, p: "" })
+                        onChange={(event) =>
+                          navigate({ model: event.target.value, p: "" })
                         }
                       >
                         <option value="">All model targets</option>
-                        {detail.manifest.models.map((m) => (
-                          <option key={m} value={m}>
-                            {modelName(m)}
+                        {detail.manifest.models.map((target) => (
+                          <option key={target} value={target}>
+                            {target}
                           </option>
                         ))}
                       </select>
                       <select
                         aria-label="Filter status"
+                        name="status-filter"
                         value={status}
-                        onChange={(e) =>
-                          navigate({ status: e.target.value, p: "" })
+                        onChange={(event) =>
+                          navigate({ status: event.target.value, p: "" })
                         }
                       >
                         <option value="">All statuses</option>
@@ -509,77 +430,108 @@ export default function App() {
                         </button>
                       )}
                     </div>
-                    <ResponseTable
-                      runs={visibleRuns}
-                      onSelect={(run) => navigate({ run: run.id })}
-                    />
-                    <div className="pagination">
-                      <span>
-                        Page {currentPage} of {pageCount}
-                      </span>
-                      <div>
-                        <button
-                          className="secondary"
-                          disabled={currentPage <= 1}
-                          onClick={() =>
-                            navigate({ p: String(currentPage - 1) })
-                          }
-                        >
-                          Previous
-                        </button>
-                        <button
-                          className="secondary"
-                          disabled={currentPage >= pageCount}
-                          onClick={() =>
-                            navigate({ p: String(currentPage + 1) })
-                          }
-                        >
-                          Next
-                        </button>
+                    <div className="response-workspace">
+                      <div className="response-index">
+                        <div className="response-index-head">
+                          <h2 id="response-count">
+                            {filtered.length} responses
+                          </h2>
+                          <span>Newest first</span>
+                        </div>
+                        <ResponseList
+                          runs={visibleRuns}
+                          selectedId={evidenceRun?.id}
+                          onSelect={(run) => navigate({ run: run.id })}
+                        />
+                        <div className="pagination">
+                          <span>
+                            Page {currentPage} of {pageCount}
+                          </span>
+                          <div>
+                            <button
+                              className="secondary"
+                              disabled={currentPage <= 1}
+                              onClick={() =>
+                                navigate({
+                                  p: String(currentPage - 1),
+                                  run: "",
+                                })
+                              }
+                            >
+                              Previous
+                            </button>
+                            <button
+                              className="secondary"
+                              disabled={currentPage >= pageCount}
+                              onClick={() =>
+                                navigate({
+                                  p: String(currentPage + 1),
+                                  run: "",
+                                })
+                              }
+                            >
+                              Next
+                            </button>
+                          </div>
+                        </div>
                       </div>
+                      <EvidenceSheet
+                        run={evidenceRun}
+                        onClose={() => navigate({ run: "" })}
+                      />
                     </div>
                   </section>
                 )}
                 {page === "experiments" && (
-                  <section className="panel">
-                    <div className="section-head">
+                  <section
+                    className="experiment-archive"
+                    aria-labelledby="experiment-list-heading"
+                  >
+                    <div className="archive-heading">
                       <div>
-                        <h2>Your experiments</h2>
-                        <p>Saved locally, with the evidence preserved.</p>
+                        <h2 id="experiment-list-heading">Saved studies</h2>
+                        <p>
+                          Collections remain inspectable even when they stop or
+                          fail.
+                        </p>
                       </div>
-                      <span className="subtle">
-                        {experiments.length} experiments
-                      </span>
+                      <span>{experiments.length} total</span>
                     </div>
                     <div className="experiment-list">
-                      {experiments.map((exp) => (
+                      {experiments.map((experiment) => (
                         <a
-                          href={`?page=overview&experiment=${exp.id}`}
+                          href={`?page=overview&experiment=${experiment.id}`}
                           className="experiment-item"
-                          key={exp.id}
-                          onClick={(e) => {
-                            if (!e.ctrlKey && !e.metaKey) {
-                              e.preventDefault();
+                          key={experiment.id}
+                          onClick={(event) => {
+                            if (!event.ctrlKey && !event.metaKey) {
+                              event.preventDefault();
                               navigate({
                                 page: "overview",
-                                experiment: exp.id,
+                                experiment: experiment.id,
                                 run: "",
                               });
                             }
                           }}
                         >
                           <span className="experiment-icon">
-                            <Flask size={24} />
+                            <Flask size={23} aria-hidden="true" />
                           </span>
-                          <div>
-                            <h3>{exp.name}</h3>
-                            <p>
-                              {date(exp.created_at)} · {exp.completed}/
-                              {exp.total} responses
-                            </p>
+                          <div className="experiment-copy">
+                            <h3>{experiment.name}</h3>
+                            <p>{experiment.category}</p>
                           </div>
-                          <Status value={exp.status} />
-                          <ArrowUpRight size={20} />
+                          <div className="experiment-count">
+                            <strong>
+                              {experiment.completed} / {experiment.total}
+                            </strong>
+                            <span>attempted</span>
+                          </div>
+                          <div className="experiment-created">
+                            <strong>{date(experiment.created_at)}</strong>
+                            <Status value={experiment.status} />
+                          </div>
+                          <ArrowUpRight size={20} aria-hidden="true" />
                         </a>
                       ))}
                     </div>
@@ -598,15 +550,109 @@ export default function App() {
       <RunDialog
         open={runOpen}
         onOpenChange={setRunOpen}
-        onStarted={(exp) => {
-          setExperiments((prev) => [exp, ...prev]);
-          navigate({ experiment: exp.id, page: "overview", run: "" });
+        onStarted={(experiment) => {
+          setExperiments((previous) => [experiment, ...previous]);
+          navigate({ experiment: experiment.id, page: "overview", run: "" });
           setNotice(
-            "Replay started. Each response will be saved to your local workspace.",
+            "Experiment started. Each response will be saved to your local workspace.",
           );
         }}
       />
-      <EvidenceDialog run={selectedRun} onClose={() => navigate({ run: "" })} />
     </>
+  );
+}
+
+function Overview({
+  detail,
+  runs,
+  onOpenEvidence,
+  onViewAll,
+}: {
+  detail: Detail;
+  runs: Run[];
+  onOpenEvidence: (run: Run) => void;
+  onViewAll: () => void;
+}) {
+  const state = getResearchState(detail);
+  const finding = getFinding(detail);
+  const unattempted =
+    detail.unattempted ?? Math.max(0, detail.total - detail.completed);
+  return (
+    <div className="overview-flow">
+      <section
+        className={`finding-band ${finding.kind}`}
+        aria-labelledby="finding-heading"
+      >
+        <div className="finding-copy">
+          <p className="section-label">Key finding</p>
+          <h2 id="finding-heading">{finding.headline}</h2>
+          <p>{finding.detail}</p>
+        </div>
+        <div className="collection-health">
+          <div className="collection-title">
+            <div>
+              <span>Collection health</span>
+              <strong>
+                {state.attempted} of {detail.total} attempted
+              </strong>
+            </div>
+            <span>{Math.round(state.coverage * 100)}%</span>
+          </div>
+          <progress value={state.attempted} max={detail.total} />
+          <dl>
+            <div>
+              <dt>{state.eligible}</dt>
+              <dd>
+                eligible
+                <br />
+                <small>for analysis</small>
+              </dd>
+            </div>
+            <div>
+              <dt>{detail.failed}</dt>
+              <dd>
+                failed
+                <br />
+                <small>error or blocked</small>
+              </dd>
+            </div>
+            <div>
+              <dt>{unattempted}</dt>
+              <dd>
+                unattempted
+                <br />
+                <small>not yet run</small>
+              </dd>
+            </div>
+            <div>
+              <dt>{detail.manifest.models.length}</dt>
+              <dd>
+                model target{detail.manifest.models.length === 1 ? "" : "s"}
+                <br />
+                <small>{detail.manifest.prompts.length} prompts</small>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+      <Visibility detail={detail} />
+      <ExplainabilityLedger detail={detail} runs={runs} />
+      <section className="evidence-trail" aria-labelledby="trail-heading">
+        <div className="section-heading-row">
+          <div>
+            <p className="section-label">Recent evidence trail</p>
+            <h2 id="trail-heading">From result to original answer</h2>
+          </div>
+          <button className="text-button arrow-link" onClick={onViewAll}>
+            View all responses <ArrowRight size={17} aria-hidden="true" />
+          </button>
+        </div>
+        <ResponseList
+          runs={runs.slice(-4).reverse()}
+          onSelect={onOpenEvidence}
+          compact
+        />
+      </section>
+    </div>
   );
 }
