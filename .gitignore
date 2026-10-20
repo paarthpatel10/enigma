@@ -125,9 +125,10 @@ node_modules/
 *.code-workspace
 *.iml
 
-# Personal Codex instructions and project-local skills
+# Personal agent instructions and project-local skills
 .agents/
 AGENTS.md
+.claude/
 
 .DS_Store
 ._*
@@ -144,3 +145,4 @@ $RECYCLE.BIN/
 *.tgz
 *.7z
 *.rar
+.playwright
