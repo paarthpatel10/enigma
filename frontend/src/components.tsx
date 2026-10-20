@@ -10,16 +10,31 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { api, date, modelName, percent } from "./api";
-import { getResearchState, getSourceSummary } from "./researchPresentation";
+import {
+  getMatchingRule,
+  getResearchState,
+  getSourceSummary,
+  statusLabel,
+} from "./researchPresentation";
 import type { Detail, Experiment, Run } from "./types";
 
-export function Status({ value, label }: { value: string; label?: string }) {
+export function Status({ value }: { value: string }) {
   const warning =
     value.includes("error") || value === "failed" || value === "interrupted";
   return (
     <span className={`status ${warning ? "warn" : ""}`}>
       <span className="status-dot" aria-hidden="true" />
-      {label ?? value.replaceAll("_", " ")}
+      {statusLabel(value)}
+    </span>
+  );
+}
+
+/** Labels how an experiment's answers were produced. */
+export function ModeTag({ mode }: { mode?: string }) {
+  const live = mode === "live-ungrounded";
+  return (
+    <span className={`mode-tag ${live ? "live" : ""}`}>
+      {live ? "Live · Ungrounded" : "Synthetic"}
     </span>
   );
 }
@@ -38,6 +53,9 @@ export function Visibility({ detail }: { detail: Detail }) {
         by_model: {},
       },
   );
+  const hasIntervals = metrics.some((brand) =>
+    Object.values(brand.by_model).some((estimate) => estimate.interval),
+  );
   return (
     <section className="visibility-field" aria-labelledby="visibility-heading">
       <div className="section-heading-row">
@@ -48,11 +66,21 @@ export function Visibility({ detail }: { detail: Detail }) {
           <h2 id="visibility-heading">Tracked brand mentions</h2>
         </div>
         <p>
-          {state.canCompare
-            ? "Rates include exact denominators"
-            : "Comparison withheld until collection completes"}
+          {!state.canCompare
+            ? "Comparison withheld until collection completes"
+            : hasIntervals
+              ? "Each rate shows mentions out of eligible responses and its 95% interval"
+              : "Each rate shows mentions out of eligible responses"}
         </p>
       </div>
+      <p className="tracked-set">
+        <span>Tracked brands</span> {detail.manifest.brands.join(", ")}.{" "}
+        <span className="tracked-set-note">
+          Only these names are counted. Other brands an answer names are not
+          extracted, so read the raw answers before treating a low count as
+          absence.
+        </span>
+      </p>
       <div className="visibility-head" aria-hidden="true">
         <span>Brand</span>
         <span>Model result</span>
@@ -78,14 +106,29 @@ export function Visibility({ detail }: { detail: Detail }) {
                   <div className="model-result" key={model}>
                     <span className="model-name">{modelName(model)}</span>
                     {state.canCompare && rate !== null ? (
-                      <div
-                        className="rate-visual"
-                        title={`${estimate.count} of ${estimate.total}; 95% interval ${estimate.interval?.map(percent).join(" to ") ?? "unavailable"}`}
-                      >
-                        <span className="rate-line">
+                      <div className="rate-visual">
+                        <span className="rate-line" aria-hidden="true">
+                          {estimate.interval && (
+                            <b
+                              style={{
+                                left: `${estimate.interval[0] * 100}%`,
+                                width: `${(estimate.interval[1] - estimate.interval[0]) * 100}%`,
+                              }}
+                            />
+                          )}
                           <i style={{ width: `${rate}%` }} />
                         </span>
-                        <span>{percent(estimate.probability)}</span>
+                        <span className="rate-figures">
+                          <strong>{percent(estimate.probability)}</strong>
+                          <span>
+                            {estimate.count} of {estimate.total}
+                          </span>
+                        </span>
+                        <span className="rate-interval">
+                          {estimate.interval
+                            ? `95% interval ${estimate.interval.map(percent).join(" to ")}`
+                            : "Descriptive frequency, no interval"}
+                        </span>
                       </div>
                     ) : (
                       <span className="comparison-note">
@@ -98,8 +141,11 @@ export function Visibility({ detail }: { detail: Detail }) {
                 );
               })}
             </div>
-            <span className="mention-count">
+            <span
+              className={`mention-count ${state.canCompare ? "" : "withheld"}`}
+            >
               {brand.mentions} / {brand.total}
+              {!state.canCompare && <small>not comparable</small>}
             </span>
           </div>
         ))}
@@ -192,14 +238,13 @@ export function ResponseList({
         <button
           className={`response-row ${selectedId === run.id ? "selected" : ""}`}
           key={run.id}
+          data-run-id={run.id}
           onClick={() => onSelect(run)}
           aria-pressed={selectedId === run.id}
         >
           <span className="response-primary">
-            <strong>{shortPrompt(run.prompt)}</strong>
-            <span>
-              {run.prompt_variant} / repeat {run.run_number}
-            </span>
+            <strong>{variantLabel(run)}</strong>
+            <span>{shortPrompt(run.prompt)}</span>
           </span>
           <span className="response-model">{modelName(run.model)}</span>
           <span className="response-mentions">
@@ -219,9 +264,13 @@ export function ResponseList({
 
 export function EvidenceSheet({
   run,
+  trackedBrands,
+  matchingRule,
   onClose,
 }: {
   run: Run | null;
+  trackedBrands: string[];
+  matchingRule: string;
   onClose: () => void;
 }) {
   const copy = (value: string) => navigator.clipboard?.writeText(value);
@@ -240,16 +289,13 @@ export function EvidenceSheet({
     <aside className="evidence-sheet" aria-labelledby="evidence-title">
       <header className="evidence-title-row">
         <div>
-          <p className="section-label">Response evidence</p>
-          <h2 id="evidence-title">{shortPrompt(run.prompt)}</h2>
+          <h2 id="evidence-title">{variantLabel(run)}</h2>
           <p>
-            {run.prompt_variant} / repeat {run.run_number} /{" "}
-            {date(run.timestamp)}
+            {modelName(run.model)} · {date(run.timestamp)}
           </p>
         </div>
         <div>
           <Status value={run.status} />
-          <span>{modelName(run.model)}</span>
           <button
             className="icon-button"
             onClick={onClose}
@@ -259,32 +305,63 @@ export function EvidenceSheet({
           </button>
         </div>
       </header>
+      {(run.exclusion_reason || run.error) && (
+        <p className="inline-error">
+          <strong>Excluded from every denominator.</strong>{" "}
+          {[
+            run.error && `Provider error: ${run.error}.`,
+            run.exclusion_reason &&
+              run.exclusion_reason !== run.error &&
+              `Exclusion reason: ${run.exclusion_reason}.`,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        </p>
+      )}
+      <section className="extraction" aria-labelledby="extraction-heading">
+        <h3 id="extraction-heading">Extraction result</h3>
+        <dl className="evidence-summary">
+          <div>
+            <dt>Tracked brand matches</dt>
+            <dd>
+              {!run.raw_text
+                ? "Not evaluated, no answer"
+                : run.mentions.length
+                  ? run.mentions.join(", ")
+                  : "None of the tracked brands"}
+            </dd>
+          </div>
+          <div>
+            <dt>Source status</dt>
+            <dd>
+              {!run.raw_text
+                ? "No answer to assess"
+                : run.synthetic === false
+                  ? "Ungrounded, no verified sources"
+                  : "Synthetic example references"}
+            </dd>
+          </div>
+        </dl>
+        <p className="matching-rule">
+          <strong>Tracked:</strong> {trackedBrands.join(", ")}. {matchingRule}{" "}
+          Other brands in the answer are not extracted.
+        </p>
+      </section>
       <EvidenceBlock title="Exact prompt" onCopy={() => copy(run.prompt)}>
         <p className="exact-prompt">{run.prompt}</p>
       </EvidenceBlock>
-      <EvidenceBlock title="Raw answer" onCopy={() => copy(run.raw_text)}>
-        <div className="raw-response">
-          {run.raw_text ||
-            `No response collected. ${run.error ?? "The provider returned no content."}`}
-        </div>
+      <EvidenceBlock
+        title="Raw answer"
+        onCopy={run.raw_text ? () => copy(run.raw_text) : undefined}
+      >
+        {run.raw_text ? (
+          <div className="raw-response">{run.raw_text}</div>
+        ) : (
+          <p className="raw-response missing">
+            No answer was collected for this attempt.
+          </p>
+        )}
       </EvidenceBlock>
-      {run.exclusion_reason && (
-        <p className="inline-error">{run.exclusion_reason}</p>
-      )}
-      <dl className="evidence-summary">
-        <div>
-          <dt>Tracked brand matches</dt>
-          <dd>{run.mentions.length ? run.mentions.join(", ") : "None"}</dd>
-        </div>
-        <div>
-          <dt>Source status</dt>
-          <dd>
-            {run.synthetic === false
-              ? "Ungrounded, no verified sources"
-              : "Synthetic example references"}
-          </dd>
-        </div>
-      </dl>
       <dl className="evidence-context">
         <div>
           <dt>Prompt variant</dt>
@@ -317,25 +394,31 @@ function EvidenceBlock({
   children,
 }: {
   title: string;
-  onCopy: () => void;
+  onCopy?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <section className="evidence-block">
       <header>
         <h3>{title}</h3>
-        <button
-          className="icon-button"
-          onClick={onCopy}
-          aria-label={`Copy ${title.toLowerCase()}`}
-        >
-          <Copy size={18} aria-hidden="true" />
-        </button>
+        {onCopy && (
+          <button
+            className="icon-button"
+            onClick={onCopy}
+            aria-label={`Copy ${title.toLowerCase()}`}
+          >
+            <Copy size={18} aria-hidden="true" />
+          </button>
+        )}
       </header>
       {children}
     </section>
   );
 }
+
+/** "variant-2" with repeat 3 becomes "Variant 2 · repeat 3". */
+export const variantLabel = (run: Run) =>
+  `${run.prompt_variant.replace(/^variant-/, "Variant ")} · repeat ${run.run_number}`;
 
 const shortPrompt = (prompt: string) => {
   const clean = prompt.replace(/\s+/g, " ").trim();
@@ -347,10 +430,12 @@ export function RunDialog({
   open,
   onOpenChange,
   onStarted,
+  returnFocusTo,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onStarted: (experiment: Experiment) => void;
+  returnFocusTo?: React.RefObject<HTMLButtonElement | null>;
 }) {
   const [name, setName] = useState("Project management landscape");
   const [repeats, setRepeats] = useState(10);
@@ -386,7 +471,15 @@ export function RunDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
-        <Dialog.Content className="dialog run-dialog">
+        <Dialog.Content
+          className={`dialog run-dialog ${live ? "live" : ""}`}
+          onCloseAutoFocus={(event) => {
+            if (returnFocusTo?.current) {
+              event.preventDefault();
+              returnFocusTo.current.focus();
+            }
+          }}
+        >
           <div className="dialog-emblem">
             <Flask size={26} aria-hidden="true" />
           </div>
@@ -449,11 +542,29 @@ export function RunDialog({
             <div className="run-estimate">
               <span>
                 {live
-                  ? "6 prompts × 1 Gemini model × 3 repeats"
+                  ? "6 prompts × gemini-3.1-flash-lite × 3 repeats"
                   : `6 prompts × 2 fixture targets × ${repeats || 0} repeats`}
               </span>
-              <strong>{live ? 18 : 12 * (repeats || 0)} responses</strong>
+              <strong>
+                {live ? "18 real requests" : `${12 * (repeats || 0)} responses`}
+              </strong>
             </div>
+            {live && (
+              <ul className="live-facts">
+                <li>
+                  Takes at least 3 minutes. Requests are spaced 10 seconds or
+                  more apart.
+                </li>
+                <li>
+                  Stops at the first provider error, such as a 503. There are no
+                  retries or fallback model, and completed answers are kept.
+                </li>
+                <li>
+                  Creates a new, permanent study. Saved answers are never
+                  overwritten.
+                </li>
+              </ul>
+            )}
             <label className="checkbox">
               <input
                 type="checkbox"
@@ -469,11 +580,15 @@ export function RunDialog({
                 ? "I verified this key's project is on Free Tier. Start up to 18 real requests and stop on quota errors."
                 : "Include one simulated timeout to review failure handling"}
             </label>
-            <div className="notice">
-              <WarningCircle size={20} aria-hidden="true" />
+            <div className={`notice ${live ? "live" : "safe"}`}>
+              {live ? (
+                <WarningCircle size={20} aria-hidden="true" />
+              ) : (
+                <Info size={20} aria-hidden="true" />
+              )}
               <span>
                 {live
-                  ? "Uses your local key. Search grounding, retries, and paid fallback stay disabled. Do not enter private health data."
+                  ? "Uses your local Gemini key with search grounding off. Keep private health information out of the experiment name."
                   : "Synthetic replay. No API calls, credentials, or provider charges."}
               </span>
             </div>
@@ -483,7 +598,7 @@ export function RunDialog({
               </p>
             )}
             <button
-              className="primary full"
+              className={`primary full ${live ? "live-submit" : ""}`}
               type="submit"
               disabled={busy || (live && !ack)}
             >
@@ -499,6 +614,7 @@ export function RunDialog({
 
 export function Methodology({ detail }: { detail: Detail }) {
   const live = detail.mode === "live-ungrounded";
+  const { canCompare } = getResearchState(detail);
   return (
     <div className="methodology-layout">
       <nav className="method-contents" aria-label="Methodology contents">
@@ -556,6 +672,16 @@ export function Methodology({ detail }: { detail: Detail }) {
               </dd>
             </div>
           </dl>
+          <details>
+            <summary>
+              View the {detail.manifest.prompts.length} prompt variants
+            </summary>
+            <ol className="prompt-variants">
+              {detail.manifest.prompts.map((prompt) => (
+                <li key={prompt}>{prompt}</li>
+              ))}
+            </ol>
+          </details>
         </section>
         <section id="metric-definitions">
           <h2>Metric definitions</h2>
@@ -563,6 +689,10 @@ export function Methodology({ detail }: { detail: Detail }) {
             <li>
               <strong>Mention rate.</strong> Eligible responses containing a
               tracked brand name, divided by all eligible responses.
+            </li>
+            <li>
+              <strong>Brand matching.</strong> {getMatchingRule(detail)} Tracked
+              brands: {detail.manifest.brands.join(", ")}.
             </li>
             <li>
               <strong>Eligible response.</strong> A complete, non-empty answer
@@ -589,7 +719,11 @@ export function Methodology({ detail }: { detail: Detail }) {
         </section>
         <section id="counts">
           <h2>Counts and denominators</h2>
-          <p>Rates stay connected to the exact number of eligible responses.</p>
+          <p>
+            {canCompare
+              ? "Rates stay connected to the exact number of eligible responses."
+              : "This collection is incomplete, so rates and intervals are withheld. Counts are listed for audit only and are not a comparison."}
+          </p>
           <div className="table-scroll">
             <table>
               <thead>
@@ -608,10 +742,20 @@ export function Methodology({ detail }: { detail: Detail }) {
                     <td>
                       {brand.mentions} / {brand.total}
                     </td>
-                    <td>{percent(brand.probability)}</td>
                     <td>
-                      {brand.interval?.map(percent).join(" to ") ??
-                        "No interval"}
+                      {!brand.total
+                        ? "No eligible responses"
+                        : canCompare
+                          ? percent(brand.probability)
+                          : "Withheld"}
+                    </td>
+                    <td>
+                      {!brand.total
+                        ? "No interval"
+                        : !canCompare
+                          ? "Withheld"
+                          : (brand.interval?.map(percent).join(" to ") ??
+                            "No interval")}
                     </td>
                     <td>{brand.recommendations ?? "Not reported"}</td>
                   </tr>

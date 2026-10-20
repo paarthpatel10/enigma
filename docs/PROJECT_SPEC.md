@@ -203,6 +203,12 @@ No eligible data yields null, not zero. Wilson intervals are illustrative on
 deterministic fixtures; independence assumptions must be revisited for real runs.
 URLs are extracted from text; example URLs are not retrieved evidence.
 
+Headline finding rule (user-approved 2026-10-20): the reviewer names a leading
+brand only when its 95% interval does not overlap the runner-up's. When intervals
+overlap or are unavailable, it reports "No tracked brand reliably led" with the
+top counts, and notes when model targets disagree on the most-mentioned brand.
+Incomplete collections never rank brands.
+
 Reviewer acceptance: launch a replay, inspect progress, reopen persisted evidence,
 filter answers, inspect raw text and provenance, and export a self-contained JSON
 bundle. Python definitions are trusted local code; the API never accepts source

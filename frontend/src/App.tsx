@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -12,18 +13,25 @@ import {
   Play,
   Sun,
   WarningCircle,
+  X,
 } from "@phosphor-icons/react";
 import { api, date } from "./api";
 import {
   EvidenceSheet,
   ExplainabilityLedger,
   Methodology,
+  ModeTag,
   ResponseList,
   RunDialog,
   Status,
   Visibility,
 } from "./components";
-import { getFinding, getResearchState } from "./researchPresentation";
+import {
+  getFinding,
+  getMatchingRule,
+  getResearchState,
+  getStopReason,
+} from "./researchPresentation";
 import type { Detail, Experiment, Run } from "./types";
 
 const pages = [
@@ -50,6 +58,31 @@ const pages = [
 
 const readQuery = () => new URLSearchParams(window.location.search);
 
+const themeKey = "enigma-theme";
+const readSavedTheme = () => {
+  try {
+    return localStorage.getItem(themeKey);
+  } catch {
+    return null;
+  }
+};
+
+// Matches the CSS breakpoint where the response workspace becomes one column.
+const compactQuery = "(max-width: 850px)";
+
+function useCompactLayout() {
+  const [compact, setCompact] = useState(
+    () => window.matchMedia(compactQuery).matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia(compactQuery);
+    const handler = () => setCompact(media.matches);
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, []);
+  return compact;
+}
+
 export default function App() {
   const [query, setQuery] = useState(readQuery);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -58,19 +91,30 @@ export default function App() {
   const [runOpen, setRunOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [dark, setDark] = useState(
-    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
-  );
+  const [dark, setDark] = useState(() => {
+    const saved = readSavedTheme();
+    return saved
+      ? saved === "dark"
+      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const compact = useCompactLayout();
+  const lastEvidenceId = useRef<string | null>(null);
+  const runButton = useRef<HTMLButtonElement>(null);
 
   const page = query.get("page") || "overview";
   const selectedId = query.get("experiment") || experiments[0]?.id;
   const search = query.get("q") || "";
   const model = query.get("model") || "";
   const status = query.get("status") || "";
-  const selectedRun = runs.find((run) => run.id === query.get("run")) ?? null;
   const loading = !detail || detail.id !== selectedId;
   const active = detail?.status === "running" || detail?.status === "queued";
-  const live = detail?.mode === "live-ungrounded";
+  // While the selected study loads, describe it from the list, not stale detail.
+  const selectedSummary = experiments.find(
+    (experiment) => experiment.id === selectedId,
+  );
+  const live =
+    (loading ? selectedSummary?.mode : detail.mode) === "live-ungrounded";
+  const auditPage = page === "responses" || page === "methodology";
 
   function navigate(changes: Record<string, string>, replace = false) {
     const next = readQuery();
@@ -90,6 +134,16 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
   }, [dark]);
+
+  function toggleTheme() {
+    const next = !dark;
+    setDark(next);
+    try {
+      localStorage.setItem(themeKey, next ? "dark" : "light");
+    } catch {
+      // Storage can be unavailable; the theme still applies for this visit.
+    }
+  }
 
   const refreshList = useCallback(async () => {
     setExperiments(await api<Experiment[]>("/experiments"));
@@ -139,14 +193,22 @@ export default function App() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / 12));
   const currentPage = Math.min(pageNumber, pageCount);
   const visibleRuns = filtered.slice((currentPage - 1) * 12, currentPage * 12);
-  const evidenceRun =
-    selectedRun ?? (page === "responses" ? visibleRuns[0] : null);
+  // Only a response that matches the current filters can stay selected.
+  const selectedRun =
+    filtered.find((run) => run.id === query.get("run")) ?? null;
+  // On compact screens evidence opens as a sheet only after an explicit choice.
+  const evidenceRun = compact
+    ? selectedRun
+    : (selectedRun ?? (page === "responses" ? visibleRuns[0] : null));
+  useEffect(() => {
+    if (selectedRun) lastEvidenceId.current = selectedRun.id;
+  }, [selectedRun]);
 
   const link = (target: string) =>
     `?${new URLSearchParams({ ...Object.fromEntries(query), page: target, run: "" })}`;
   const pageTitle =
     page === "overview"
-      ? detail?.name || "Research overview"
+      ? (loading ? selectedSummary?.name : detail.name) || "Research overview"
       : page === "responses"
         ? "Response explorer"
         : page === "experiments"
@@ -154,7 +216,7 @@ export default function App() {
           : "Methodology";
   const pageSubtitle =
     page === "overview"
-      ? detail
+      ? !loading
         ? `${detail.category} · ${detail.manifest.geography}`
         : "Loading the selected study…"
       : page === "responses"
@@ -221,7 +283,7 @@ export default function App() {
           </a>
           <button
             className="theme-button"
-            onClick={() => setDark(!dark)}
+            onClick={toggleTheme}
             aria-label={`Use ${dark ? "light" : "dark"} appearance`}
           >
             {dark ? (
@@ -237,29 +299,41 @@ export default function App() {
       <div className="app-shell">
         <header className="topbar">
           <div className="breadcrumb">
-            Studies <span>/</span> <strong>{pageTitle}</strong>
+            Studies <span aria-hidden="true">/</span>{" "}
+            <strong>{pageTitle}</strong>
           </div>
           <span className="local-label">Local research workspace</span>
+          <button
+            className="icon-button topbar-theme"
+            onClick={toggleTheme}
+            aria-label={`Use ${dark ? "light" : "dark"} appearance`}
+          >
+            {dark ? (
+              <Sun size={19} aria-hidden="true" />
+            ) : (
+              <Moon size={19} aria-hidden="true" />
+            )}
+          </button>
         </header>
-        <main id="main">
+        <main
+          id="main"
+          className={`page-${page} ${auditPage ? "audit-page" : ""}`}
+        >
           <header className="study-header">
             <div className="study-copy">
-              <p className="eyebrow">Enigma Research Ledger</p>
               <h1>{pageTitle}</h1>
               <p className="study-subtitle">{pageSubtitle}</p>
-              {detail && page !== "experiments" && (
+              {!loading && page !== "experiments" && (
                 <p className="study-date">Created {date(detail.created_at)}</p>
               )}
             </div>
             <div className="study-actions">
-              {detail && page !== "experiments" && (
-                <Status
-                  value={detail.status}
-                  label={getResearchState(detail).label}
-                />
+              {!loading && page !== "experiments" && (
+                <Status value={detail.status} />
               )}
               <button
-                className="primary"
+                ref={runButton}
+                className={auditPage ? "secondary" : "primary"}
                 onClick={() => setRunOpen(true)}
                 disabled={active}
               >
@@ -301,16 +375,18 @@ export default function App() {
                   ? "Live · Ungrounded. Extracted claims and URLs require review."
                   : "Synthetic replay. No live provider calls."}
               </span>
-              <a
-                href={link("methodology")}
-                onClick={(event) => {
-                  event.preventDefault();
-                  navigate({ page: "methodology", run: "" });
-                }}
-              >
-                How to read this study{" "}
-                <ArrowRight size={16} aria-hidden="true" />
-              </a>
+              {page !== "methodology" && (
+                <a
+                  href={link("methodology")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate({ page: "methodology", run: "" });
+                  }}
+                >
+                  How to read this study{" "}
+                  <ArrowRight size={16} aria-hidden="true" />
+                </a>
+              )}
             </div>
           )}
 
@@ -436,7 +512,7 @@ export default function App() {
                           <h2 id="response-count">
                             {filtered.length} responses
                           </h2>
-                          <span>Newest first</span>
+                          <span>In collection order</span>
                         </div>
                         <ResponseList
                           runs={visibleRuns}
@@ -475,11 +551,56 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                      <EvidenceSheet
-                        run={evidenceRun}
-                        onClose={() => navigate({ run: "" })}
-                      />
+                      {!compact && (
+                        <EvidenceSheet
+                          run={evidenceRun}
+                          trackedBrands={detail.manifest.brands}
+                          matchingRule={getMatchingRule(detail)}
+                          onClose={() => navigate({ run: "" })}
+                        />
+                      )}
                     </div>
+                    {compact && (
+                      <Dialog.Root
+                        open={Boolean(evidenceRun)}
+                        onOpenChange={(open) => {
+                          if (!open) navigate({ run: "" });
+                        }}
+                      >
+                        <Dialog.Portal>
+                          <Dialog.Overlay className="overlay" />
+                          <Dialog.Content
+                            className="evidence-dialog"
+                            aria-describedby={undefined}
+                            onCloseAutoFocus={(event) => {
+                              const row = document.querySelector<HTMLElement>(
+                                `[data-run-id="${lastEvidenceId.current}"]`,
+                              );
+                              if (row) {
+                                event.preventDefault();
+                                row.focus();
+                              }
+                            }}
+                          >
+                            <div className="evidence-dialog-bar">
+                              <Dialog.Title>Response evidence</Dialog.Title>
+                              <Dialog.Close
+                                className="icon-button"
+                                aria-label="Close response evidence"
+                              >
+                                <X size={20} aria-hidden="true" />
+                              </Dialog.Close>
+                            </div>
+                            <EvidenceSheet
+                              run={evidenceRun}
+                              trackedBrands={detail.manifest.brands}
+                              matchingRule={getMatchingRule(detail)}
+                              onClose={() => navigate({ run: "" })}
+                            />
+                          </Dialog.Content>
+                        </Dialog.Portal>
+                      </Dialog.Root>
+                    )}
                   </section>
                 )}
                 {page === "experiments" && (
@@ -519,7 +640,13 @@ export default function App() {
                           </span>
                           <div className="experiment-copy">
                             <h3>{experiment.name}</h3>
-                            <p>{experiment.category}</p>
+                            <p>
+                              <ModeTag mode={experiment.mode} />
+                              {experiment.category} ·{" "}
+                              <span className="hash">
+                                {experiment.id.slice(0, 6)}
+                              </span>
+                            </p>
                           </div>
                           <div className="experiment-count">
                             <strong>
@@ -550,6 +677,7 @@ export default function App() {
       <RunDialog
         open={runOpen}
         onOpenChange={setRunOpen}
+        returnFocusTo={runButton}
         onStarted={(experiment) => {
           setExperiments((previous) => [experiment, ...previous]);
           navigate({ experiment: experiment.id, page: "overview", run: "" });
@@ -575,6 +703,7 @@ function Overview({
 }) {
   const state = getResearchState(detail);
   const finding = getFinding(detail);
+  const stopReason = getStopReason(detail, runs);
   const unattempted =
     detail.unattempted ?? Math.max(0, detail.total - detail.completed);
   return (
@@ -587,6 +716,12 @@ function Overview({
           <p className="section-label">Key finding</p>
           <h2 id="finding-heading">{finding.headline}</h2>
           <p>{finding.detail}</p>
+          {stopReason && (
+            <p className="stop-reason">
+              <WarningCircle size={18} aria-hidden="true" />
+              <span>{stopReason}</span>
+            </p>
+          )}
         </div>
         <div className="collection-health">
           <div className="collection-title">
@@ -621,7 +756,11 @@ function Overview({
               <dd>
                 unattempted
                 <br />
-                <small>not yet run</small>
+                <small>
+                  {detail.status === "interrupted"
+                    ? "never requested"
+                    : "not yet run"}
+                </small>
               </dd>
             </div>
             <div>

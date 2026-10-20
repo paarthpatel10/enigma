@@ -21,13 +21,14 @@ export type SourceSummary = {
   observedReferences: number;
 };
 
-const statusLabel = (status: string) => {
+export const statusLabel = (status: string) => {
   if (status === "interrupted") return "Collection stopped";
   if (status === "completed_with_errors") return "Completed with errors";
   if (status === "running" || status === "queued")
     return "Collecting responses";
   if (status === "completed") return "Collection complete";
-  return status.replaceAll("_", " ");
+  const words = status.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
 export function getResearchState(detail: Detail): ResearchState {
@@ -78,11 +79,91 @@ export function getFinding(detail: Detail): Finding {
     };
   }
 
+  const tied = ranked.filter(
+    (brand) => brand.probability === leader.probability,
+  );
+  if (tied.length > 1) {
+    return {
+      kind: "comparison",
+      headline: `${joinNames(tied.map((brand) => brand.brand))} appeared equally often in this collection.`,
+      detail: `Each was mentioned in ${leader.mentions} of ${leader.total} eligible responses. No tracked brand led.`,
+    };
+  }
+
+  const disagreement = modelsDisagree(detail)
+    ? " The model targets disagree on which brand appears most."
+    : "";
+  const next = ranked[1];
+  if (!next) {
+    return {
+      kind: "comparison",
+      headline: `${leader.brand} appeared in ${leader.mentions} of ${leader.total} eligible responses.`,
+      detail: `Only one tracked brand has eligible data, so nothing is ranked.${disagreement}`,
+    };
+  }
+
+  // Name a leader only when the 95% intervals separate; otherwise report counts.
+  const hasIntervals = Boolean(leader.interval && next.interval);
+  const separated = hasIntervals && next.interval![1] < leader.interval![0];
+  const counts = `${leader.brand} ${leader.mentions} of ${leader.total}, ${next.brand} ${next.mentions} of ${next.total}`;
+  if (!separated) {
+    return {
+      kind: "comparison",
+      headline: "No tracked brand reliably led this collection.",
+      detail: `Most mentioned: ${counts}. ${
+        hasIntervals
+          ? "Their 95% intervals overlap, so the difference may not hold in a larger sample."
+          : "No intervals are available for this collection, so brands are not ranked."
+      }${disagreement}`,
+    };
+  }
+
   return {
     kind: "comparison",
     headline: `${leader.brand} appeared most often in this collection.`,
-    detail: `${leader.mentions} of ${leader.total} eligible responses mentioned ${leader.brand}. Inspect the evidence before interpreting the difference.`,
+    detail: `${leader.mentions} of ${leader.total} eligible responses mentioned ${leader.brand}. Next was ${next.brand}, in ${next.mentions} of ${next.total}; their 95% intervals do not overlap.${disagreement}`,
   };
+}
+
+/** True when model targets have different most-mentioned brands. */
+function modelsDisagree(detail: Detail) {
+  const leaders = detail.manifest.models.map((model) => {
+    const rates = detail.summary.brands.map(
+      (brand) => brand.by_model[model]?.probability ?? -1,
+    );
+    const top = Math.max(...rates);
+    return detail.summary.brands
+      .filter((_, index) => rates[index] === top)
+      .map((brand) => brand.brand)
+      .sort()
+      .join("|");
+  });
+  return new Set(leaders).size > 1;
+}
+
+/** Describes the saved extractor's brand-matching rule for reviewers. */
+export function getMatchingRule(detail: Detail) {
+  return detail.mode === "live-ungrounded"
+    ? "Provisional context matching: a brand counts only when its name appears with product context, such as “Simple Replenishing” or “Dot & Key” (also “Dot and Key”), so a generic word like “simple” does not count. Not yet validated against human review."
+    : "Whole-word, case-insensitive match on the tracked brand name.";
+}
+
+const joinNames = (names: string[]) =>
+  names.length <= 2
+    ? names.join(" and ")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/** Explains why an interrupted collection stopped, using its saved runs. */
+export function getStopReason(detail: Detail, runs: Run[]): string | null {
+  if (detail.status !== "interrupted") return null;
+  const unattempted =
+    detail.unattempted ?? Math.max(0, detail.total - detail.completed);
+  const failure = [...runs].reverse().find((run) => run.status === "failed");
+  const never = `${unattempted} of ${detail.total} planned ${unattempted === 1 ? "response was" : "responses were"} never requested.`;
+  if (failure?.error) {
+    return `Collection stopped at ${failure.id} after a provider error (${failure.error}). Collection does not retry, so ${never.charAt(0).toLowerCase()}${never.slice(1)}`;
+  }
+  return `Collection stopped before finishing and no provider error was recorded, for example because the local server restarted. ${never}`;
 }
 
 export function getSourceSummary(detail: Detail, runs: Run[]): SourceSummary {
